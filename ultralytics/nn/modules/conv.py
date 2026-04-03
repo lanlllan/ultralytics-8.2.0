@@ -19,6 +19,10 @@ __all__ = (
     "ChannelAttention",
     "SpatialAttention",
     "CBAM",
+    "SEAttention",
+    "ECAAttention",
+    "SimAM",
+    "CoordAtt",
     "Concat",
     "RepConv",
 )
@@ -318,6 +322,83 @@ class CBAM(nn.Module):
     def forward(self, x):
         """Applies the forward pass through C1 module."""
         return self.spatial_attention(self.channel_attention(x))
+
+
+class SEAttention(nn.Module):
+    """Squeeze-and-Excitation attention module (Hu et al., CVPR 2018)."""
+
+    def __init__(self, c1, reduction=16):
+        super().__init__()
+        mid = max(c1 // reduction, 8)
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(c1, mid, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(mid, c1, 1, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        return x * self.fc(self.avg_pool(x))
+
+
+class ECAAttention(nn.Module):
+    """Efficient Channel Attention module (Wang et al., CVPR 2020)."""
+
+    def __init__(self, c1, gamma=2, b=1):
+        super().__init__()
+        t = int(abs(math.log2(c1) / gamma + b / gamma))
+        k = t if t % 2 else t + 1
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.conv = nn.Conv1d(1, 1, kernel_size=k, padding=k // 2, bias=False)
+        self.act = nn.Sigmoid()
+
+    def forward(self, x):
+        y = self.avg_pool(x).squeeze(-1).transpose(-1, -2)
+        y = self.act(self.conv(y)).transpose(-1, -2).unsqueeze(-1)
+        return x * y
+
+
+class SimAM(nn.Module):
+    """Simple Parameter-Free Attention Module (Yang et al., ICML 2021). Zero learnable parameters."""
+
+    def __init__(self, c1, e_lambda=1e-4):
+        super().__init__()
+        self.e_lambda = e_lambda
+
+    def forward(self, x):
+        b, c, h, w = x.size()
+        n = h * w - 1
+        mean = x.mean(dim=[2, 3], keepdim=True)
+        var = ((x - mean) ** 2).sum(dim=[2, 3], keepdim=True) / n
+        y = (x - mean) / (var + self.e_lambda).sqrt()
+        return x * y.sigmoid()
+
+
+class CoordAtt(nn.Module):
+    """Coordinate Attention module (Hou et al., CVPR 2021). Encodes horizontal/vertical positional information."""
+
+    def __init__(self, c1, reduction=32):
+        super().__init__()
+        mid = max(c1 // reduction, 8)
+        self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
+        self.pool_w = nn.AdaptiveAvgPool2d((1, None))
+        self.conv1 = nn.Conv2d(c1, mid, 1, bias=False)
+        self.bn1 = nn.BatchNorm2d(mid)
+        self.act = nn.SiLU(inplace=True)
+        self.conv_h = nn.Conv2d(mid, c1, 1, bias=False)
+        self.conv_w = nn.Conv2d(mid, c1, 1, bias=False)
+
+    def forward(self, x):
+        b, c, h, w = x.size()
+        x_h = self.pool_h(x)
+        x_w = self.pool_w(x).permute(0, 1, 3, 2)
+        y = torch.cat([x_h, x_w], dim=2)
+        y = self.act(self.bn1(self.conv1(y)))
+        x_h, x_w = y.split([h, w], dim=2)
+        x_h = self.conv_h(x_h).sigmoid()
+        x_w = self.conv_w(x_w.permute(0, 1, 3, 2)).sigmoid()
+        return x * x_h * x_w
 
 
 class Concat(nn.Module):

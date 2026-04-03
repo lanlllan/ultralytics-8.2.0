@@ -9,11 +9,16 @@ import torch.nn as nn
 
 from ultralytics.nn.modules import (
     AIFI,
+    CBAM,
     C1,
     C2,
     C3,
     C3TR,
+    CoordAtt,
+    ECAAttention,
     OBB,
+    SEAttention,
+    SimAM,
     SPP,
     SPPELAN,
     SPPF,
@@ -925,6 +930,10 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
             args = [c1, c2, *args[1:]]
         elif m is CBFuse:
             c2 = ch[f[-1]]
+        elif m in {CBAM, SEAttention, ECAAttention, SimAM, CoordAtt}:
+            c1 = ch[f]
+            c2 = c1
+            args = [c1, *args[1:]]
         else:
             c2 = ch[f]
 
