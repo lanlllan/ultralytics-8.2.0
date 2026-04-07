@@ -64,17 +64,41 @@ class FocalLoss(nn.Module):
 class BboxLoss(nn.Module):
     """Criterion class for computing training losses during training."""
 
-    def __init__(self, reg_max, use_dfl=False):
+    def __init__(self, reg_max, use_dfl=False, iou_type="CIoU"):
         """Initialize the BboxLoss module with regularization maximum and DFL settings."""
         super().__init__()
         self.reg_max = reg_max
         self.use_dfl = use_dfl
+        self.iou_type = iou_type
 
     def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask):
         """IoU loss."""
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
-        iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, CIoU=True)
-        loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+
+        if self.iou_type == "WIoU":
+            iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False)
+            with torch.no_grad():
+                p = pred_bboxes[fg_mask]
+                t = target_bboxes[fg_mask]
+                center_dist2 = ((p[:, 0:1] + p[:, 2:3] - t[:, 0:1] - t[:, 2:3]).pow(2)
+                                + (p[:, 1:2] + p[:, 3:4] - t[:, 1:2] - t[:, 3:4]).pow(2)) / 4
+                cw = p[:, 2:3].maximum(t[:, 2:3]) - p[:, 0:1].minimum(t[:, 0:1])
+                ch = p[:, 3:4].maximum(t[:, 3:4]) - p[:, 1:2].minimum(t[:, 1:2])
+                c2 = cw.pow(2) + ch.pow(2) + 1e-7
+                wise_scale = torch.exp(center_dist2 / c2)
+            loss_iou = ((1.0 - iou) * wise_scale * weight).sum() / target_scores_sum
+        else:
+            iou = bbox_iou(
+                pred_bboxes[fg_mask],
+                target_bboxes[fg_mask],
+                xywh=False,
+                CIoU=self.iou_type == "CIoU",
+                DIoU=self.iou_type == "DIoU",
+                GIoU=self.iou_type == "GIoU",
+                EIoU=self.iou_type == "EIoU",
+                SIoU=self.iou_type == "SIoU",
+            )
+            loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
 
         # DFL loss
         if self.use_dfl:
@@ -165,7 +189,8 @@ class v8DetectionLoss:
         self.use_dfl = m.reg_max > 1
 
         self.assigner = TaskAlignedAssigner(topk=10, num_classes=self.nc, alpha=0.5, beta=6.0)
-        self.bbox_loss = BboxLoss(m.reg_max - 1, use_dfl=self.use_dfl).to(device)
+        iou_type = getattr(self.hyp, "iou_type", "CIoU")
+        self.bbox_loss = BboxLoss(m.reg_max - 1, use_dfl=self.use_dfl, iou_type=iou_type).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
     def preprocess(self, targets, batch_size, scale_tensor):
