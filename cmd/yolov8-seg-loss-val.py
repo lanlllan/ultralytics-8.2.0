@@ -6,6 +6,7 @@
 产出目录: runs/segment/loss_analysis_{split}/
   table1_overview.csv       — 各实验核心指标对比
   table2_iou_ablation.csv   — 消融分析: IoU 损失类型对比
+  table3_mask_ablation.csv  — 消融分析: 掩码损失类型对比
 
 用法:
   python cmd/yolov8-seg-loss-val.py              # 评估所有 loss_* 实验
@@ -26,10 +27,12 @@ IMGSZ = 960
 RUNS_DIR = "runs/segment"
 
 EXPERIMENT_META = {
-    "baseline": {"iou_type": "CIoU",  "desc": "CIoU（默认）"},
-    "eiou":     {"iou_type": "EIoU",  "desc": "EIoU（宽高分离）"},
-    "siou":     {"iou_type": "SIoU",  "desc": "SIoU（角度感知）"},
-    "wiou":     {"iou_type": "WIoU",  "desc": "WIoU（动态聚焦）"},
+    "baseline": {"改进类型": "基线",     "改进项": "CIoU + BCE",   "desc": "默认损失"},
+    "eiou":     {"改进类型": "IoU损失",  "改进项": "EIoU",         "desc": "宽高分离惩罚"},
+    "siou":     {"改进类型": "IoU损失",  "改进项": "SIoU",         "desc": "角度+形状感知"},
+    "wiou":     {"改进类型": "IoU损失",  "改进项": "WIoU",         "desc": "动态聚焦加权"},
+    "dice":     {"改进类型": "掩码损失", "改进项": "Dice",         "desc": "区域重叠优化"},
+    "bce-dice": {"改进类型": "掩码损失", "改进项": "BCE+Dice",     "desc": "像素+区域联合"},
 }
 
 
@@ -97,19 +100,19 @@ def print_comparison(results, split, baseline_key="baseline"):
     print(sep)
 
     header = (
-        f"{'实验':>12} | {'IoU类型':>8} {'说明':>16} |"
+        f"{'实验':>12} | {'类型':>8} {'改进项':>10} {'说明':>14} |"
         f" {'M_mAP50':>8} {'M_mAP95':>8} {'提升':>8} |"
         f" {'B_mAP50':>8} {'B_mAP95':>8} |"
         f" {'推理ms':>7}"
     )
     print(header)
-    print("-" * 120)
+    print("-" * 130)
 
     sorted_keys = sorted(results.keys(), key=lambda k: results[k]["mask_map"], reverse=True)
 
     for exp_name in sorted_keys:
         r = results[exp_name]
-        meta = EXPERIMENT_META.get(exp_name, {"iou_type": "?", "desc": "?"})
+        meta = EXPERIMENT_META.get(exp_name, {"改进类型": "?", "改进项": "?", "desc": "?"})
 
         if baseline and exp_name != baseline_key:
             delta_map = r["mask_map"] - baseline["mask_map"]
@@ -118,7 +121,7 @@ def print_comparison(results, split, baseline_key="baseline"):
             delta_map_str = "基线"
 
         print(
-            f"{exp_name:>12} | {meta['iou_type']:>8} {meta['desc']:>16} |"
+            f"{exp_name:>12} | {meta['改进类型']:>8} {meta['改进项']:>10} {meta['desc']:>14} |"
             f" {r['mask_map50']:>8.4f} {r['mask_map']:>8.4f} {delta_map_str:>8} |"
             f" {r['box_map50']:>8.4f} {r['box_map']:>8.4f} |"
             f" {r['inference_ms']:>7.1f}"
@@ -129,7 +132,8 @@ def print_comparison(results, split, baseline_key="baseline"):
     best_name = sorted_keys[0]
     if best_name != baseline_key and baseline:
         improve = results[best_name]["mask_map"] - baseline["mask_map"]
-        print(f"\n  最优方案: {best_name} ({EXPERIMENT_META.get(best_name, {}).get('iou_type', '?')})")
+        best_meta = EXPERIMENT_META.get(best_name, {})
+        print(f"\n  最优方案: {best_name} ({best_meta.get('改进项', '?')})")
         print(f"    mask_mAP50-95 提升: {improve:+.4f} ({improve/baseline['mask_map']*100:+.1f}%)")
     elif baseline:
         print(f"\n  注意: 所有改进方案均未超过基线 mask_mAP50-95")
@@ -161,7 +165,7 @@ def save_table1(results, split, baseline_key="baseline"):
     path = os.path.join(out_dir, "table1_overview.csv")
 
     fieldnames = [
-        "实验", "IoU类型", "说明",
+        "实验", "改进类型", "改进项", "说明",
         "mask_Precision", "mask_Recall", "mask_mAP50", "mask_mAP50-95", "mask_mAP50-95_提升",
         "box_Precision", "box_Recall", "box_mAP50", "box_mAP50-95",
         "推理耗时(ms)",
@@ -171,12 +175,13 @@ def save_table1(results, split, baseline_key="baseline"):
     rows = []
     for exp in sorted_keys:
         r = results[exp]
-        meta = EXPERIMENT_META.get(exp, {"iou_type": "?", "desc": "?"})
+        meta = EXPERIMENT_META.get(exp, {"改进类型": "?", "改进项": "?", "desc": "?"})
         dm = (r["mask_map"] - baseline["mask_map"]) if baseline and exp != baseline_key else 0.0
 
         rows.append({
             "实验": exp,
-            "IoU类型": meta["iou_type"],
+            "改进类型": meta["改进类型"],
+            "改进项": meta["改进项"],
             "说明": meta["desc"],
             "mask_Precision": _R(r["mask_p"]),
             "mask_Recall": _R(r["mask_r"]),
@@ -195,31 +200,31 @@ def save_table1(results, split, baseline_key="baseline"):
     return path
 
 
-def save_table2(results, split, baseline_key="baseline"):
+def _build_ablation_table(results, exp_list, split, filename, baseline_key="baseline"):
     out_dir = _make_output_dir(split)
     baseline = results.get(baseline_key)
     if not baseline:
         return None
-    path = os.path.join(out_dir, "table2_iou_ablation.csv")
+    path = os.path.join(out_dir, filename)
 
     fieldnames = [
-        "IoU类型", "说明",
+        "改进项", "说明",
         "mask_Precision", "mask_Recall", "mask_mAP50", "mask_mAP50-95",
         "box_Precision", "box_Recall", "box_mAP50", "box_mAP50-95",
         "mask_mAP50-95_vs_baseline", "mask_mAP50-95_vs_baseline(%)",
     ]
 
     rows = []
-    for exp in ["baseline", "eiou", "siou"]:
+    for exp in exp_list:
         if exp not in results:
             continue
         r = results[exp]
-        meta = EXPERIMENT_META.get(exp, {"iou_type": "?", "desc": "?"})
+        meta = EXPERIMENT_META.get(exp, {"改进项": "?", "desc": "?"})
         dm = (r["mask_map"] - baseline["mask_map"]) if exp != baseline_key else 0.0
         dm_pct = dm / baseline["mask_map"] * 100 if baseline["mask_map"] and exp != baseline_key else 0.0
 
         rows.append({
-            "IoU类型": meta["iou_type"],
+            "改进项": meta["改进项"],
             "说明": meta["desc"],
             "mask_Precision": _R(r["mask_p"]),
             "mask_Recall": _R(r["mask_r"]),
@@ -234,8 +239,22 @@ def save_table2(results, split, baseline_key="baseline"):
         })
 
     _write_csv(path, fieldnames, rows)
-    print(f"  表2 已保存: {path}")
+    print(f"  已保存: {path}")
     return path
+
+
+def save_table2(results, split, baseline_key="baseline"):
+    return _build_ablation_table(
+        results, ["baseline", "eiou", "siou", "wiou"], split,
+        "table2_iou_ablation.csv", baseline_key,
+    )
+
+
+def save_table3(results, split, baseline_key="baseline"):
+    return _build_ablation_table(
+        results, ["baseline", "dice", "bce-dice"], split,
+        "table3_mask_ablation.csv", baseline_key,
+    )
 
 
 def main():
@@ -270,6 +289,7 @@ def main():
 
     save_table1(results, args.split)
     save_table2(results, args.split)
+    save_table3(results, args.split)
 
     out_dir = _make_output_dir(args.split)
     print(f"\n  全部完成，共评估 {len(results)} 个实验")

@@ -3,21 +3,26 @@
 
 工作流程:
   1. 从 yolov8n-seg.pt COCO 预训练权重出发
-  2. baseline 使用默认 CIoU（对照组）
-  3. 各实验仅切换 iou_type 参数，模型架构完全一致
+  2. baseline 使用默认 CIoU + BCE（对照组）
+  3. 各实验切换 iou_type / seg_loss_type 参数，模型架构完全一致
   4. 所有实验统一配置，确保公平对比
 
-实验矩阵:
-  baseline   - CIoU（默认，对照组）
+实验矩阵（IoU 损失改进）:
+  baseline   - CIoU + BCE（默认，对照组）
   eiou       - EIoU（宽高分离惩罚）
   siou       - SIoU（角度感知）
   wiou       - WIoU（动态聚焦加权）
 
+实验矩阵（掩码损失改进）:
+  dice       - Dice Loss（区域重叠优化）
+  bce-dice   - BCE + Dice（像素级 + 区域级联合）
+
 用法:
-  python cmd/yolov8-seg-loss-train.py                   # 交互选择
-  python cmd/yolov8-seg-loss-train.py --exp eiou         # 直接运行
-  python cmd/yolov8-seg-loss-train.py --exp all          # 全部实验
-  python cmd/yolov8-seg-loss-train.py --exp all --resume # 从中断处恢复
+  python cmd/yolov8-seg-loss-train.py                     # 交互选择
+  python cmd/yolov8-seg-loss-train.py --exp eiou           # 直接运行
+  python cmd/yolov8-seg-loss-train.py --exp bce-dice       # 掩码损失实验
+  python cmd/yolov8-seg-loss-train.py --exp all            # 全部实验
+  python cmd/yolov8-seg-loss-train.py --exp all --resume   # 从中断处恢复
 """
 
 import argparse
@@ -40,20 +45,36 @@ EXP_PREFIX = "loss"
 
 EXPERIMENTS = {
     "baseline": {
-        "desc": "CIoU 默认损失（对照组）",
+        "desc": "CIoU + BCE 默认损失（对照组）",
         "iou_type": "CIoU",
+        "seg_loss_type": "BCE",
     },
+    # --- IoU 损失改进 ---
     "eiou": {
         "desc": "EIoU（宽高分离惩罚，2022）",
         "iou_type": "EIoU",
+        "seg_loss_type": "BCE",
     },
     "siou": {
         "desc": "SIoU（角度+形状感知，2022）",
         "iou_type": "SIoU",
+        "seg_loss_type": "BCE",
     },
     "wiou": {
         "desc": "WIoU（动态聚焦加权，2023）",
         "iou_type": "WIoU",
+        "seg_loss_type": "BCE",
+    },
+    # --- 掩码损失改进 ---
+    "dice": {
+        "desc": "Dice Loss（区域重叠优化）",
+        "iou_type": "CIoU",
+        "seg_loss_type": "Dice",
+    },
+    "bce-dice": {
+        "desc": "BCE+Dice（像素+区域联合）",
+        "iou_type": "CIoU",
+        "seg_loss_type": "BCE-Dice",
     },
 }
 
@@ -127,7 +148,7 @@ def run_experiment(exp_name, base_model, lr0, resume=False):
     print(f"\n{'='*60}")
     print(f"  实验: {exp_name}")
     print(f"  说明: {exp['desc']}")
-    print(f"  IoU 类型: {exp['iou_type']}")
+    print(f"  IoU 类型: {exp['iou_type']}  |  掩码损失: {exp['seg_loss_type']}")
     if is_resuming:
         print(f"  ** 恢复模式: 从 {ckpt_path} 继续训练（{info}）**")
     else:
@@ -150,6 +171,7 @@ def run_experiment(exp_name, base_model, lr0, resume=False):
             name=f"{EXP_PREFIX}_{exp_name}",
             lr0=lr0,
             iou_type=exp["iou_type"],
+            seg_loss_type=exp["seg_loss_type"],
             **TRAIN_PARAMS,
         )
 
@@ -191,7 +213,7 @@ def select_experiment():
 def main():
     parser = argparse.ArgumentParser(description="YOLOv8-seg 损失函数改进对比实验")
     parser.add_argument("--exp", type=str, default=None,
-                        help="实验名称 (baseline/eiou/siou/wiou/all)")
+                        help="实验名称 (baseline/eiou/siou/wiou/dice/bce-dice/all)")
     parser.add_argument("--base-model", type=str, default=None,
                         help=f"基础模型权重路径 (default: {BASE_MODEL})")
     parser.add_argument("--data", type=str, default=None, help="数据集 YAML")

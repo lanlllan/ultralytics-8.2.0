@@ -12,6 +12,24 @@ from .metrics import bbox_iou, probiou
 from .tal import bbox2dist
 
 
+def dice_loss(pred_mask, gt_mask, smooth=1.0):
+    """Compute Dice Loss between predicted logits and binary ground truth masks.
+
+    Args:
+        pred_mask: predicted logits (before sigmoid), shape (n, H, W).
+        gt_mask: binary ground truth, shape (n, H, W).
+        smooth: smoothing factor to avoid division by zero.
+
+    Returns:
+        Scalar Dice loss averaged over instances.
+    """
+    pred = pred_mask.sigmoid()
+    pred_flat = pred.flatten(1)
+    gt_flat = gt_mask.flatten(1)
+    intersection = (pred_flat * gt_flat).sum(1)
+    return 1 - ((2.0 * intersection + smooth) / (pred_flat.sum(1) + gt_flat.sum(1) + smooth)).mean()
+
+
 class VarifocalLoss(nn.Module):
     """
     Varifocal loss by Zhang et al.
@@ -280,6 +298,7 @@ class v8SegmentationLoss(v8DetectionLoss):
         """Initializes the v8SegmentationLoss class, taking a de-paralleled model as argument."""
         super().__init__(model)
         self.overlap = model.args.overlap_mask
+        self.seg_loss_type = getattr(self.hyp, "seg_loss_type", "BCE")
 
     def __call__(self, preds, batch):
         """Calculate and return the loss for the YOLO model."""
@@ -366,7 +385,12 @@ class v8SegmentationLoss(v8DetectionLoss):
 
     @staticmethod
     def single_mask_loss(
-        gt_mask: torch.Tensor, pred: torch.Tensor, proto: torch.Tensor, xyxy: torch.Tensor, area: torch.Tensor
+        gt_mask: torch.Tensor,
+        pred: torch.Tensor,
+        proto: torch.Tensor,
+        xyxy: torch.Tensor,
+        area: torch.Tensor,
+        seg_loss_type: str = "BCE",
     ) -> torch.Tensor:
         """
         Compute the instance segmentation loss for a single image.
@@ -377,17 +401,23 @@ class v8SegmentationLoss(v8DetectionLoss):
             proto (torch.Tensor): Prototype masks of shape (32, H, W).
             xyxy (torch.Tensor): Ground truth bounding boxes in xyxy format, normalized to [0, 1], of shape (n, 4).
             area (torch.Tensor): Area of each ground truth bounding box of shape (n,).
+            seg_loss_type (str): Mask loss type: 'BCE', 'Dice', or 'BCE-Dice'.
 
         Returns:
             (torch.Tensor): The calculated mask loss for a single image.
-
-        Notes:
-            The function uses the equation pred_mask = torch.einsum('in,nhw->ihw', pred, proto) to produce the
-            predicted masks from the prototype masks and predicted mask coefficients.
         """
         pred_mask = torch.einsum("in,nhw->ihw", pred, proto)  # (n, 32) @ (32, 80, 80) -> (n, 80, 80)
-        loss = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
-        return (crop_mask(loss, xyxy).mean(dim=(1, 2)) / area).sum()
+
+        if seg_loss_type == "Dice":
+            return dice_loss(crop_mask(pred_mask, xyxy), crop_mask(gt_mask, xyxy))
+
+        bce = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
+        bce_loss = (crop_mask(bce, xyxy).mean(dim=(1, 2)) / area).sum()
+
+        if seg_loss_type == "BCE-Dice":
+            return bce_loss + dice_loss(crop_mask(pred_mask, xyxy), crop_mask(gt_mask, xyxy))
+
+        return bce_loss
 
     def calculate_segmentation_loss(
         self,
@@ -446,7 +476,8 @@ class v8SegmentationLoss(v8DetectionLoss):
                     gt_mask = masks[batch_idx.view(-1) == i][mask_idx]
 
                 loss += self.single_mask_loss(
-                    gt_mask, pred_masks_i[fg_mask_i], proto_i, mxyxy_i[fg_mask_i], marea_i[fg_mask_i]
+                    gt_mask, pred_masks_i[fg_mask_i], proto_i, mxyxy_i[fg_mask_i], marea_i[fg_mask_i],
+                    seg_loss_type=self.seg_loss_type,
                 )
 
             # WARNING: lines below prevents Multi-GPU DDP 'unused gradient' PyTorch errors, do not remove
