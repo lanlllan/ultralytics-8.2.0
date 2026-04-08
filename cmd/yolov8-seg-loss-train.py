@@ -201,6 +201,8 @@ def main():
                         help="恢复模式: 跳过已完成，从 last.pt 断点续训")
     parser.add_argument("--skip-baseline", action="store_true",
                         help="跳过 baseline 训练（复用注意力实验的 attnv2_baseline）")
+    parser.add_argument("--box", type=float, default=None,
+                        help="box loss 增益 (default: 7.5, EIoU/SIoU 建议 4.0-5.0)")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch", type=int, default=None)
     parser.add_argument("--imgsz", type=int, default=None)
@@ -216,6 +218,8 @@ def main():
         TRAIN_PARAMS["batch"] = args.batch
     if args.imgsz:
         TRAIN_PARAMS["imgsz"] = args.imgsz
+    if args.box is not None:
+        TRAIN_PARAMS["box"] = args.box
 
     if not os.path.exists(base_model):
         print(f"  错误: 基础模型不存在: {base_model}")
@@ -234,10 +238,12 @@ def main():
     else:
         to_run = select_experiment()
 
+    box_gain = TRAIN_PARAMS.get("box", 7.5)
     print(f"\n  基础模型: {base_model}")
     print(f"  数据集: {DATA_YAML}")
     print(f"  优化器: {TRAIN_PARAMS['optimizer']}  lr0={args.lr0}")
     print(f"  参数: epochs={TRAIN_PARAMS['epochs']} batch={TRAIN_PARAMS['batch']} imgsz={TRAIN_PARAMS['imgsz']}")
+    print(f"  box loss 增益: {box_gain}{'  (已调整)' if args.box is not None else ''}")
     print(f"  输出前缀: {EXP_PREFIX}_")
     print(f"  恢复模式: {'开启' if args.resume else '关闭'}")
     print(f"  待运行: {', '.join(to_run)}")
