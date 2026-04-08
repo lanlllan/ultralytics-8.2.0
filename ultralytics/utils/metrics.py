@@ -137,13 +137,12 @@ def bbox_iou(box1, box2, xywh=True, GIoU=False, DIoU=False, CIoU=False, EIoU=Fal
                 s_cw = (b2_x1 + b2_x2 - b1_x1 - b1_x2) * 0.5
                 s_ch = (b2_y1 + b2_y2 - b1_y1 - b1_y2) * 0.5
                 sigma = (s_cw.pow(2) + s_ch.pow(2)).clamp(min=eps).sqrt()
-                sin_alpha = s_ch.abs() / sigma
-                sin_alpha = sin_alpha.clamp(max=1.0)
-                angle_cost = torch.cos(2 * torch.asin(sin_alpha) - math.pi / 2)
+                sin_alpha = (s_ch.abs() / sigma).clamp(0, 1.0 - 1e-4)
+                angle_cost = 2 * sin_alpha * (1 - sin_alpha.pow(2)).clamp(min=0).sqrt()
                 rho_x = (s_cw / cw.clamp(min=eps)).pow(2)
                 rho_y = (s_ch / ch.clamp(min=eps)).pow(2)
                 gamma = angle_cost - 2
-                dist_cost = 2 - torch.exp(gamma * rho_x) - torch.exp(gamma * rho_y)
+                dist_cost = 2 - torch.exp((gamma * rho_x).clamp(min=-20)) - torch.exp((gamma * rho_y).clamp(min=-20))
                 omiga_w = (w1 - w2).abs() / w1.maximum(w2).clamp(min=eps)
                 omiga_h = (h1 - h2).abs() / h1.maximum(h2).clamp(min=eps)
                 shape_cost = (1 - torch.exp(-omiga_w)).pow(4) + (1 - torch.exp(-omiga_h)).pow(4)
