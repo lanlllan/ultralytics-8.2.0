@@ -666,7 +666,12 @@ class Metric(SimpleClass):
         update(results): Update metric attributes with new evaluation results.
     """
 
-    def __init__(self) -> None:
+    FITNESS_PRESETS = {
+        "default": {"keys": "mean_results", "w": [0.0, 0.0, 0.1, 0.9]},
+        "recall_map75": {"keys": "recall_map75_map", "w": [0.2, 0.5, 0.3]},
+    }
+
+    def __init__(self, fitness_type="default") -> None:
         """Initializes a Metric instance for computing evaluation metrics for the YOLOv8 model."""
         self.p = []  # (nc, )
         self.r = []  # (nc, )
@@ -674,6 +679,7 @@ class Metric(SimpleClass):
         self.all_ap = []  # (nc, 10)
         self.ap_class_index = []  # (nc, )
         self.nc = 0
+        self.fitness_type = fitness_type
 
     @property
     def ap50(self):
@@ -762,9 +768,14 @@ class Metric(SimpleClass):
         return maps
 
     def fitness(self):
-        """Model fitness as a weighted combination of metrics."""
-        w = [0.0, 0.0, 0.1, 0.9]  # weights for [P, R, mAP@0.5, mAP@0.5:0.95]
-        return (np.array(self.mean_results()) * w).sum()
+        """Model fitness as a weighted combination of metrics (configurable via fitness_type)."""
+        preset = self.FITNESS_PRESETS.get(self.fitness_type, self.FITNESS_PRESETS["default"])
+        w = preset["w"]
+        if preset["keys"] == "recall_map75_map":
+            vals = np.array([self.mr, self.map75, self.map])
+        else:
+            vals = np.array(self.mean_results())
+        return (vals * w).sum()
 
     def update(self, results):
         """
@@ -843,13 +854,13 @@ class DetMetrics(SimpleClass):
         curves_results: TODO
     """
 
-    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=()) -> None:
+    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=(), fitness_type="default") -> None:
         """Initialize a DetMetrics instance with a save directory, plot flag, callback function, and class names."""
         self.save_dir = save_dir
         self.plot = plot
         self.on_plot = on_plot
         self.names = names
-        self.box = Metric()
+        self.box = Metric(fitness_type=fitness_type)
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
         self.task = "detect"
 
@@ -941,14 +952,14 @@ class SegmentMetrics(SimpleClass):
         results_dict: Returns the dictionary containing all the detection and segmentation metrics and fitness score.
     """
 
-    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=()) -> None:
+    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=(), fitness_type="default") -> None:
         """Initialize a SegmentMetrics instance with a save directory, plot flag, callback function, and class names."""
         self.save_dir = save_dir
         self.plot = plot
         self.on_plot = on_plot
         self.names = names
-        self.box = Metric()
-        self.seg = Metric()
+        self.box = Metric(fitness_type=fitness_type)
+        self.seg = Metric(fitness_type=fitness_type)
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
         self.task = "segment"
 
@@ -1082,15 +1093,15 @@ class PoseMetrics(SegmentMetrics):
         results_dict: Returns the dictionary containing all the detection and segmentation metrics and fitness score.
     """
 
-    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=()) -> None:
+    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=(), fitness_type="default") -> None:
         """Initialize the PoseMetrics class with directory path, class names, and plotting options."""
         super().__init__(save_dir, plot, names)
         self.save_dir = save_dir
         self.plot = plot
         self.on_plot = on_plot
         self.names = names
-        self.box = Metric()
-        self.pose = Metric()
+        self.box = Metric(fitness_type=fitness_type)
+        self.pose = Metric(fitness_type=fitness_type)
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
         self.task = "pose"
 
@@ -1244,12 +1255,12 @@ class ClassifyMetrics(SimpleClass):
 
 
 class OBBMetrics(SimpleClass):
-    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=()) -> None:
+    def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=(), fitness_type="default") -> None:
         self.save_dir = save_dir
         self.plot = plot
         self.on_plot = on_plot
         self.names = names
-        self.box = Metric()
+        self.box = Metric(fitness_type=fitness_type)
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
 
     def process(self, tp, conf, pred_cls, target_cls):

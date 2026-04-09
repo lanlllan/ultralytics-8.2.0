@@ -225,6 +225,9 @@ def main():
                         help="跳过 baseline 训练（复用注意力实验的 attnv2_baseline）")
     parser.add_argument("--box", type=float, default=None,
                         help="box loss 增益 (default: 7.5, EIoU/SIoU 建议 4.0-5.0)")
+    parser.add_argument("--fitness_type", type=str, default="default",
+                        choices=["default", "recall_map75"],
+                        help="Fitness 函数类型 (default: 原版, recall_map75: OCR流水线)")
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch", type=int, default=None)
     parser.add_argument("--imgsz", type=int, default=None)
@@ -242,6 +245,8 @@ def main():
         TRAIN_PARAMS["imgsz"] = args.imgsz
     if args.box is not None:
         TRAIN_PARAMS["box"] = args.box
+    if args.fitness_type != "default":
+        TRAIN_PARAMS["fitness_type"] = args.fitness_type
 
     if not os.path.exists(base_model):
         print(f"  错误: 基础模型不存在: {base_model}")
@@ -266,6 +271,8 @@ def main():
     print(f"  优化器: {TRAIN_PARAMS['optimizer']}  lr0={args.lr0}")
     print(f"  参数: epochs={TRAIN_PARAMS['epochs']} batch={TRAIN_PARAMS['batch']} imgsz={TRAIN_PARAMS['imgsz']}")
     print(f"  box loss 增益: {box_gain}{'  (已调整)' if args.box is not None else ''}")
+    fitness_label = "recall_map75 (0.2R+0.5mAP75+0.3mAP95)" if args.fitness_type == "recall_map75" else "default (0.1mAP50+0.9mAP95)"
+    print(f"  Fitness 函数: {fitness_label}")
     print(f"  输出前缀: {EXP_PREFIX}_")
     print(f"  恢复模式: {'开启' if args.resume else '关闭'}")
     print(f"  待运行: {', '.join(to_run)}")

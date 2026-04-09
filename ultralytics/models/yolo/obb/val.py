@@ -28,7 +28,8 @@ class OBBValidator(DetectionValidator):
         """Initialize OBBValidator and set task to 'obb', metrics to OBBMetrics."""
         super().__init__(dataloader, save_dir, pbar, args, _callbacks)
         self.args.task = "obb"
-        self.metrics = OBBMetrics(save_dir=self.save_dir, plot=True, on_plot=self.on_plot)
+        fitness_type = getattr(self.args, "fitness_type", "default")
+        self.metrics = OBBMetrics(save_dir=self.save_dir, plot=True, on_plot=self.on_plot, fitness_type=fitness_type)
 
     def init_metrics(self, model):
         """Initialize evaluation metrics for YOLO."""
