@@ -1095,11 +1095,7 @@ class PoseMetrics(SegmentMetrics):
 
     def __init__(self, save_dir=Path("."), plot=False, on_plot=None, names=(), fitness_type="default") -> None:
         """Initialize the PoseMetrics class with directory path, class names, and plotting options."""
-        super().__init__(save_dir, plot, names)
-        self.save_dir = save_dir
-        self.plot = plot
-        self.on_plot = on_plot
-        self.names = names
+        super().__init__(save_dir, plot, on_plot, names, fitness_type)
         self.box = Metric(fitness_type=fitness_type)
         self.pose = Metric(fitness_type=fitness_type)
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
