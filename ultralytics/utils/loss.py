@@ -96,14 +96,9 @@ class BboxLoss(nn.Module):
         if self.iou_type == "WIoU":
             iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False)
             with torch.no_grad():
-                p = pred_bboxes[fg_mask]
-                t = target_bboxes[fg_mask]
-                center_dist2 = ((p[:, 0:1] + p[:, 2:3] - t[:, 0:1] - t[:, 2:3]).pow(2)
-                                + (p[:, 1:2] + p[:, 3:4] - t[:, 1:2] - t[:, 3:4]).pow(2)) / 4
-                cw = p[:, 2:3].maximum(t[:, 2:3]) - p[:, 0:1].minimum(t[:, 0:1])
-                ch = p[:, 3:4].maximum(t[:, 3:4]) - p[:, 1:2].minimum(t[:, 1:2])
-                c2 = cw.pow(2) + ch.pow(2) + 1e-7
-                wise_scale = torch.exp(center_dist2 / c2)
+                iou_loss = (1.0 - iou).detach()
+                beta = iou_loss.mean()
+                wise_scale = (beta / iou_loss.clamp(min=1e-7)).clamp(min=0.5, max=1.5)
             loss_iou = ((1.0 - iou) * wise_scale * weight).sum() / target_scores_sum
         else:
             iou = bbox_iou(

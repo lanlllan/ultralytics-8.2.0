@@ -3,8 +3,9 @@
 
 ====================== Fitness 函数说明 ======================
 
-  直接调用框架内置的 Fitness 计算，
-  同时在脚本内额外计算"对照组"Fitness 用于新旧对比。
+  通过 model.val() 获取原始评估指标（P/R/mAP 等），
+  然后在脚本内基于 Metric.FITNESS_PRESETS 离线计算两种 Fitness
+  用于新旧方案对比。model.val() 本身的 fitness 值不参与排名。
 
   预设:
     default       — 0.1×mAP50 + 0.9×mAP95 (原 Ultralytics 默认)
@@ -69,10 +70,10 @@ def compute_f2(p, r):
 
 def eval_model(weights_path, split, eval_name, outdir):
     """
-    评估单个模型，同时计算 default 和 recall_map75 两种 Fitness。
+    评估单个模型，同时离线计算 default 和 recall_map75 两种 Fitness。
 
-    通过 model.val() 执行 COCO 评估后，从 metrics.seg 中直接调用
-    框架预设计算两种 Fitness 用于对比。
+    model.val() 获取原始指标，两种 Fitness 均在脚本内从 metrics.seg
+    离线重算（不依赖 model.val() 输出的 fitness 值）。
     """
     model = YOLO(weights_path)
     metrics = model.val(
@@ -258,7 +259,7 @@ def save_csv(results, outdir):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="统一模型评估 — 新旧 Fitness 对比 (使用框架内置预设)",
+        description="统一模型评估 — 新旧 Fitness 离线重算对比 (基于框架预设权重)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""示例:
   python cmd/yolov8-seg-fitness-eval.py --model runs/segment/attnv2_baseline/weights/best.pt

@@ -1031,8 +1031,8 @@ class SegmentMetrics(SimpleClass):
 
     @property
     def fitness(self):
-        """Get the fitness score for both segmentation and bounding box models."""
-        return self.seg.fitness() + self.box.fitness()
+        """Get the fitness score for segmentation model (mask-only, used for best.pt selection)."""
+        return self.seg.fitness()
 
     @property
     def ap_class_index(self):
