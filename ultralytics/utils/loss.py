@@ -88,18 +88,61 @@ class BboxLoss(nn.Module):
         self.reg_max = reg_max
         self.use_dfl = use_dfl
         self.iou_type = iou_type
+        # WIoU v3 超参（论文推荐值：alpha=1.9, delta=3, EMA 动量=0.97）
+        self._wiou_alpha = 1.9
+        self._wiou_delta = 3.0
+        self._wiou_momentum = 0.97
+        # 维护 L_IoU 的 EMA；persistent=False 避免写入 checkpoint 造成 resume 不兼容
+        self.register_buffer("iou_mean", torch.tensor(1.0), persistent=False)
 
     def forward(self, pred_dist, pred_bboxes, anchor_points, target_bboxes, target_scores, target_scores_sum, fg_mask):
         """IoU loss."""
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
 
         if self.iou_type == "WIoU":
-            iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False)
+            pred = pred_bboxes[fg_mask]       # [N, 4], xyxy
+            target = target_bboxes[fg_mask]   # [N, 4], xyxy
+            iou = bbox_iou(pred, target, xywh=False)  # [N, 1]
+            l_iou = 1.0 - iou                                 # L_IoU
+
+            # ---- WIoU v1: 距离感知项 R_WIoU = exp(center_dist^2 / (Wg^2 + Hg^2)^*) ----
+            pcx = (pred[..., 0:1] + pred[..., 2:3]) * 0.5
+            pcy = (pred[..., 1:2] + pred[..., 3:4]) * 0.5
+            tcx = (target[..., 0:1] + target[..., 2:3]) * 0.5
+            tcy = (target[..., 1:2] + target[..., 3:4]) * 0.5
+            cw = pred[..., 2:3].maximum(target[..., 2:3]) - pred[..., 0:1].minimum(target[..., 0:1])
+            ch = pred[..., 3:4].maximum(target[..., 3:4]) - pred[..., 1:2].minimum(target[..., 1:2])
+            # 论文要求 Wg^2 + Hg^2 从计算图分离，避免梯度反传到最小包围框
+            wh_diag2 = (cw.pow(2) + ch.pow(2)).clamp(min=1e-7).detach()
+            center_dist2 = (pcx - tcx).pow(2) + (pcy - tcy).pow(2)
+            r_wiou = torch.exp(center_dist2 / wh_diag2)        # R_WIoU
+            l_wiou_v1 = r_wiou * l_iou                         # WIoU v1
+
+            # ---- WIoU v3: 非单调聚焦 r = beta / (delta * alpha^(beta - delta)) ----
             with torch.no_grad():
-                iou_loss = (1.0 - iou).detach()
-                beta = iou_loss.mean()
-                wise_scale = (beta / iou_loss.clamp(min=1e-7)).clamp(min=0.5, max=1.5)
-            loss_iou = ((1.0 - iou) * wise_scale * weight).sum() / target_scores_sum
+                l_iou_det = l_iou.detach()
+                batch_mean = l_iou_det.mean()
+                # EMA 统计量始终保持 fp32：AMP 下 batch_mean 可能是 fp16/bf16，
+                # 若把 iou_mean 降到低精度会累积舍入误差、导致 beta 抖动。
+                # 因此只对齐 device，并在参与更新/除法时临时升到 fp32。
+                # 正常走 BboxLoss(...).to(device) 时 buffer 已随模块迁移，此处是防御性兜底；
+                # 用标准赋值（nn.Module.__setattr__ 会自动更新 _buffers 注册表），
+                # 比 .data 写法更清晰且对 torch.compile 友好。
+                if self.iou_mean.device != batch_mean.device:
+                    self.iou_mean = self.iou_mean.to(device=batch_mean.device)
+                # EMA: bar_L <- m * bar_L + (1 - m) * batch_mean（在 fp32 上累积）
+                self.iou_mean.mul_(self._wiou_momentum).add_(batch_mean.float() * (1.0 - self._wiou_momentum))
+
+                # 仅在与样本张量参与除法时 cast 回样本 dtype
+                iou_mean_cast = self.iou_mean.clamp(min=1e-7).to(l_iou_det.dtype)
+                beta = l_iou_det / iou_mean_cast                         # 样本离群度
+                alpha_t = torch.tensor(self._wiou_alpha, device=beta.device, dtype=beta.dtype)
+                # 非单调聚焦系数：对 r(β) = β / (δ·α^(β-δ)) 求导可知，
+                # 峰值位置为 β* = 1/ln(α)（α=1.9 时 ≈ 1.56），与 δ 无关；
+                # δ 只决定基准尺度，β 偏离 β* 越远（过易或过难/离群）r 越小。
+                focusing = beta / (self._wiou_delta * torch.pow(alpha_t, beta - self._wiou_delta))
+
+            loss_iou = (focusing * l_wiou_v1 * weight).sum() / target_scores_sum
         else:
             iou = bbox_iou(
                 pred_bboxes[fg_mask],

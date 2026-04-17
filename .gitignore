@@ -172,3 +172,7 @@ yolov8-bvn.yaml
 
 # IDE / editor -------------------------------------------------------------------------------------------------
 .cursor/
+
+node_modules/
+package-lock.json
+package.json
