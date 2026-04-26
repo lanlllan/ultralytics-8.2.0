@@ -3,7 +3,7 @@
 
 自动扫描 runs/segment/attnv2_* 下的训练结果，统一评估并生成对比表格。
 
-产出目录: runs/segment/attnv2_analysis_{split}/
+产出目录: runs/segment/attnv2_analysis_{split}_{fitness_type}/
   table1_overview.csv       — 各实验核心指标对比
   table2_ablation_type.csv  — 消融分析: 注意力类型对比（位置A）
   table3_ablation_pos.csv   — 消融分析: 插入位置对比（A vs C）
@@ -70,13 +70,14 @@ def eval_model(weights_path, exp_name, split, fitness_type="default"):
     model = YOLO(weights_path)
     model.model.info(verbose=False)
 
+    fitness_tag = fitness_type.replace("-", "_")
     metrics = model.val(
         data=DATA_YAML,
         split=split,
         imgsz=IMGSZ,
         verbose=False,
         project=RUNS_DIR,
-        name=f"attnv2_eval_{exp_name}_{split}",
+        name=f"attnv2_eval_{exp_name}_{split}_{fitness_tag}",
         fitness_type=fitness_type,
         workers=0,
     )
@@ -288,8 +289,9 @@ def print_ablation_position(results, baseline_key="baseline"):
     print()
 
 
-def _make_output_dir(split):
-    out_dir = os.path.join(RUNS_DIR, f"attnv2_analysis_{split}")
+def _make_output_dir(split, fitness_type="default"):
+    fitness_tag = fitness_type.replace("-", "_")
+    out_dir = os.path.join(RUNS_DIR, f"attnv2_analysis_{split}_{fitness_tag}")
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
 
@@ -308,7 +310,7 @@ def _R(v, n=5):
 
 def save_table1(results, split, fitness_type="default", baseline_key="baseline"):
     """表1: 各实验核心指标对比 → table1_overview.csv"""
-    out_dir = _make_output_dir(split)
+    out_dir = _make_output_dir(split, fitness_type)
     baseline = results.get(baseline_key)
     path = os.path.join(out_dir, "table1_overview.csv")
 
@@ -356,9 +358,9 @@ def save_table1(results, split, fitness_type="default", baseline_key="baseline")
     return path
 
 
-def save_table2(results, split, baseline_key="baseline"):
+def save_table2(results, split, baseline_key="baseline", fitness_type="default"):
     """表2: 消融分析——注意力类型对比（位置A） → table2_ablation_type.csv"""
-    out_dir = _make_output_dir(split)
+    out_dir = _make_output_dir(split, fitness_type)
     baseline = results.get(baseline_key)
     if not baseline:
         return None
@@ -410,9 +412,9 @@ def save_table2(results, split, baseline_key="baseline"):
     return path
 
 
-def save_table3(results, split, baseline_key="baseline"):
+def save_table3(results, split, baseline_key="baseline", fitness_type="default"):
     """表3: 消融分析——插入位置对比（A vs C） → table3_ablation_pos.csv"""
-    out_dir = _make_output_dir(split)
+    out_dir = _make_output_dir(split, fitness_type)
     baseline = results.get(baseline_key)
     if not baseline:
         return None
@@ -517,10 +519,10 @@ def main():
     print_ablation_type(results)
     print_ablation_position(results)
 
-    out_dir = _make_output_dir(args.split)
+    out_dir = _make_output_dir(args.split, args.fitness_type)
     save_table1(results, args.split, args.fitness_type)
-    save_table2(results, args.split)
-    save_table3(results, args.split)
+    save_table2(results, args.split, fitness_type=args.fitness_type)
+    save_table3(results, args.split, fitness_type=args.fitness_type)
 
     print(f"\n  全部完成，共评估 {len(results)} 个实验")
     print(f"  结果目录: {out_dir}")

@@ -3,7 +3,7 @@
 
 自动扫描 runs/segment/loss_* 下的训练结果，统一评估并生成对比表格。
 
-产出目录: runs/segment/loss_analysis_{split}/
+产出目录: runs/segment/loss_analysis_{split}_{fitness_type}/
   table1_overview.csv       — 各实验核心指标对比
   table2_iou_ablation.csv   — 消融分析: IoU 损失类型对比
   table3_mask_ablation.csv  — 消融分析: 掩码损失类型对比
@@ -75,13 +75,14 @@ def _compute_fitness(metric_obj, fitness_type):
 def eval_model(weights_path, exp_name, split, fitness_type="default"):
     model = YOLO(weights_path)
 
+    fitness_tag = fitness_type.replace("-", "_")
     metrics = model.val(
         data=DATA_YAML,
         split=split,
         imgsz=IMGSZ,
         verbose=False,
         project=RUNS_DIR,
-        name=f"loss_eval_{exp_name}_{split}",
+        name=f"loss_eval_{exp_name}_{split}_{fitness_tag}",
         fitness_type=fitness_type,
         workers=0,
     )
@@ -162,8 +163,9 @@ def print_comparison(results, split, fitness_type="default", baseline_key="basel
     print()
 
 
-def _make_output_dir(split):
-    out_dir = os.path.join(RUNS_DIR, f"loss_analysis_{split}")
+def _make_output_dir(split, fitness_type="default"):
+    fitness_tag = fitness_type.replace("-", "_")
+    out_dir = os.path.join(RUNS_DIR, f"loss_analysis_{split}_{fitness_tag}")
     os.makedirs(out_dir, exist_ok=True)
     return out_dir
 
@@ -181,7 +183,7 @@ def _R(v, n=5):
 
 
 def save_table1(results, split, fitness_type="default", baseline_key="baseline"):
-    out_dir = _make_output_dir(split)
+    out_dir = _make_output_dir(split, fitness_type)
     baseline = results.get(baseline_key)
     path = os.path.join(out_dir, "table1_overview.csv")
 
@@ -225,8 +227,8 @@ def save_table1(results, split, fitness_type="default", baseline_key="baseline")
     return path
 
 
-def _build_ablation_table(results, exp_list, split, filename, baseline_key="baseline"):
-    out_dir = _make_output_dir(split)
+def _build_ablation_table(results, exp_list, split, filename, baseline_key="baseline", fitness_type="default"):
+    out_dir = _make_output_dir(split, fitness_type)
     baseline = results.get(baseline_key)
     if not baseline:
         return None
@@ -268,17 +270,17 @@ def _build_ablation_table(results, exp_list, split, filename, baseline_key="base
     return path
 
 
-def save_table2(results, split, baseline_key="baseline"):
+def save_table2(results, split, baseline_key="baseline", fitness_type="default"):
     return _build_ablation_table(
         results, ["baseline", "eiou", "siou", "wiou"], split,
-        "table2_iou_ablation.csv", baseline_key,
+        "table2_iou_ablation.csv", baseline_key, fitness_type,
     )
 
 
-def save_table3(results, split, baseline_key="baseline"):
+def save_table3(results, split, baseline_key="baseline", fitness_type="default"):
     return _build_ablation_table(
         results, ["baseline", "dice", "bce-dice"], split,
-        "table3_mask_ablation.csv", baseline_key,
+        "table3_mask_ablation.csv", baseline_key, fitness_type,
     )
 
 
@@ -319,10 +321,10 @@ def main():
     print_comparison(results, args.split, args.fitness_type)
 
     save_table1(results, args.split, args.fitness_type)
-    save_table2(results, args.split)
-    save_table3(results, args.split)
+    save_table2(results, args.split, fitness_type=args.fitness_type)
+    save_table3(results, args.split, fitness_type=args.fitness_type)
 
-    out_dir = _make_output_dir(args.split)
+    out_dir = _make_output_dir(args.split, args.fitness_type)
     print(f"\n  全部完成，共评估 {len(results)} 个实验")
     print(f"  结果目录: {out_dir}")
 

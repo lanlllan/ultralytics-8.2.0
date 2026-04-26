@@ -6,7 +6,7 @@ import yaml
 from datetime import datetime
 from ultralytics import YOLO
 
-MODEL_PATH = "./runs/segment/train11/weights/best.pt"
+MODEL_PATH = "./runs/segment/loss_wiou3/weights/best.pt"
 EXPORT_BASE = "./export"
 DATASET_YAML = "./yolov8-bvn.yaml"
 
